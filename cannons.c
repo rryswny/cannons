@@ -269,6 +269,12 @@
 
 #define MAX_SPEED 375.0
 
+#define COMPUTER_ACCURACY (0.1*MAX_POWER)
+
+#define COMP_ANGLE 0
+#define COMP_POWER 1
+#define COMP_RANGE 2
+
 #if LCD_HEIGHT <= 64
 #define CYCLES 20
 #else
@@ -293,9 +299,11 @@ bool button_fire = 0;
 
 float gravity = 88.29;
 int frames_per_second = 4;
+bool computer_opponent = 0;
+
 bool quit_plugin = false;
 
-float angle[PLAYERS] = {45, 45};
+float angle[PLAYERS] = {45.0, 45.0};
 float power;
 
 float cannonball_u;
@@ -314,15 +322,16 @@ bool game_over = 0;
 float dot_x[NUM_DOTS], dot_y[NUM_DOTS];
 int dot_r[NUM_DOTS], dot_g[NUM_DOTS], dot_b[NUM_DOTS];
 
+/*
 static const struct opt_items gravity_settings[4] = {
     { "Off",      -1 },
     { "Weak",     -1 },
     { "Moderate", -1 },
     { "Strong",   -1 },
 };
-
-int gravity_values[4] = {
-    0.0, 5.0, 10.0, 15.0 };
+*/
+/*int gravity_values[4] = {
+    0.0, 5.0, 10.0, 15.0 };*/
 
 static const struct opt_items fps_settings[9] = {
     { "20 FPS", -1 },
@@ -339,8 +348,16 @@ static const struct opt_items fps_settings[9] = {
 int fps_values[9] = {
     20, 25, 30, 35, 40, 45, 50, 55, 60 };
 
-MENUITEM_STRINGLIST(menu, "Move Square Menu", NULL,
-                    "Start", "Gravity",
+static const struct opt_items opponent_settings[2] = {
+    { "Human",      -1 },
+    { "Computer",   -1 },
+};
+
+int opponent_values[2] = {
+    0, 1};
+    
+MENUITEM_STRINGLIST(menu, "Cannons Menu", NULL,
+                    "Start", "Opponent",
                     "FPS (Speed)", "Playback Control", "Quit");
 
 float dt = (float) CYCLETIME/HZ;
@@ -384,8 +401,8 @@ void cannons_menu(void)
                 break;
 
             case 1:
-                rb->set_option("Gravity", &gravity, INT,
-                                gravity_settings, 4, NULL);
+                rb->set_option("Opponent", &computer_opponent, INT,
+                                opponent_settings, 2, NULL);
                 break;
 
             case 2:
@@ -403,6 +420,65 @@ void cannons_menu(void)
                 break;
         }
     }
+}
+
+void artificial_inteligence(float *computer_long_shot, 
+                            float *computer_short_shot, int *mode)
+{
+    float computer_opponent_range;
+    float speed;
+    float player_separation = playerx[1] - playerx[0];
+    
+    angle[PLAYER_TWO] = 45.0;
+    
+    float cos_angle = (float) fp14_cos(angle[PLAYER_TWO]) / 16384.0;
+    float sin_angle = (float) fp14_sin(angle[PLAYER_TWO]) / 16384.0;
+    
+    power = 0.5*(computer_long_shot[COMP_POWER] + computer_short_shot[COMP_POWER])
+        + (rb->rand() % (int) COMPUTER_ACCURACY) - (int) COMPUTER_ACCURACY;
+    
+    while (power > MAX_POWER)
+    {
+        power -= MAX_POWER;
+    }
+    
+    speed = (float) MAX_SPEED / MAX_POWER * power;
+    
+    cannonball_u = - speed * cos_angle;
+    cannonball_v = speed * sin_angle;
+    
+    computer_opponent_range = playerx[PLAYER_TWO] - 2.0 * speed * cos_angle
+        * speed * sin_angle / gravity;
+    
+    if (computer_opponent_range < player_separation - BLAST_RADIUS)
+    {
+        if (computer_opponent_range > computer_short_shot[COMP_RANGE])
+        {
+            computer_short_shot[COMP_ANGLE] = angle[PLAYER_TWO];
+            computer_short_shot[COMP_POWER] = power;
+            computer_short_shot[COMP_RANGE] = computer_opponent_range;
+        }
+    }
+    else if (computer_opponent_range > player_separation + BLAST_RADIUS)
+    {
+        if (computer_opponent_range < computer_long_shot[COMP_RANGE])
+        {
+            computer_long_shot[COMP_ANGLE] = angle[PLAYER_TWO];
+            computer_long_shot[COMP_POWER] = power;
+            computer_long_shot[COMP_RANGE] = computer_opponent_range;
+        }
+    }
+    else
+    {
+        computer_short_shot[COMP_ANGLE] = angle[PLAYER_TWO];
+        computer_short_shot[COMP_POWER] = power;
+        computer_short_shot[COMP_RANGE] = computer_opponent_range;
+        
+        computer_long_shot[COMP_ANGLE] = angle[PLAYER_TWO];
+        computer_long_shot[COMP_POWER] = power;
+        computer_long_shot[COMP_RANGE] = computer_opponent_range;
+    }
+    *mode = CANNONBALL_FLIGHT;
 }
 
 void win(int player)
@@ -505,9 +581,9 @@ void actions(int* mode, int player, bool* switch_player)
     {
         if (*mode == SET_ANGLE)
         {
-            if (angle[player] < 90)
+            if (angle[player] < 90.0)
             {
-                angle[player] += 2;
+                angle[player] += 1.0;
             }
         }
     }
@@ -515,9 +591,9 @@ void actions(int* mode, int player, bool* switch_player)
     {
         if (*mode == SET_ANGLE)
         {
-            if (angle[player] > 0)
+            if (angle[player] > 0.0)
             {
-                angle[player] -= 2;
+                angle[player] -= 1.0;
             }
         }
     }
@@ -734,6 +810,9 @@ enum plugin_status plugin_start(const void* parameter)
     int mode;
     int player;
     int end;
+    
+    float computer_long_shot[3] = {45.0, MAX_POWER, MAX_SPEED*MAX_SPEED/gravity}; //change to struct
+    float computer_short_shot[3] = {45.0, 0.0, 0.0}; //change to struct
 
     /* set everything up.. no BL timeout, no backdrop,
        white-text-on-black-background. */
@@ -787,6 +866,12 @@ enum plugin_status plugin_start(const void* parameter)
             {
                 end = *rb->current_tick + CYCLETIME;
 
+                //computer controlled:
+                if (mode == SET_ANGLE && player == PLAYER_TWO && computer_opponent == 1)
+                {
+                    artificial_inteligence(computer_long_shot, computer_short_shot, &mode);
+                }
+                
                 detect_keys();
 
                 actions(&mode, player, &switch_player);
